@@ -164,7 +164,7 @@ struct Task
 	uchar	*stk;
 	uint	stksize;
 	int	exiting;
-	int	alltaskslot;
+	int	alltaskslot; // 在alltask中的下标
 	int	system;
 	int	ready;
 	void	(*startfn)(void*);

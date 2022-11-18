@@ -11,7 +11,7 @@ int	taskexitval;
 Task	*taskrunning;
 
 Context	taskschedcontext;
-Tasklist	taskrunqueue;
+Tasklist	taskrunqueue; // 比较朴素的FIFO队列
 
 Task	**alltask;
 int		nalltask;
@@ -65,11 +65,11 @@ taskstart(uint y, uint x)
 	z <<= 16;
 	z |= y;
 	t = (Task*)z;
-
+    // 执行实际的task函数
 //print("taskstart %p\n", t);
 	t->startfn(t->startarg);
 //print("taskexits %p\n", t);
-	taskexit(0);
+	taskexit(0); // 函数退出，这个函数永远不会返回
 //print("not reacehd\n");
 }
 
@@ -83,7 +83,7 @@ taskalloc(void (*fn)(void*), void *arg, uint stack)
 	uint x, y;
 	ulong z;
 
-	/* allocate the task and stack together */
+	/* allocate the task and stack together */ // task和堆栈是放在一起的
 	t = malloc(sizeof *t+stack);
 	if(t == nil){
 		fprint(2, "taskalloc malloc: %r\n");
@@ -92,16 +92,16 @@ taskalloc(void (*fn)(void*), void *arg, uint stack)
 	memset(t, 0, sizeof *t);
 	t->stk = (uchar*)(t+1);
 	t->stksize = stack;
-	t->id = ++taskidgen;
+	t->id = ++taskidgen; //并不是线程安全的
 	t->startfn = fn;
 	t->startarg = arg;
 
 	/* do a reasonable initialization */
 	memset(&t->context.uc, 0, sizeof t->context.uc);
-	sigemptyset(&zero);
+	sigemptyset(&zero);// 获得当前的信号屏蔽配置
 	sigprocmask(SIG_BLOCK, &zero, &t->context.uc.uc_sigmask);
 
-	/* must initialize with current context */
+	/* must initialize with current context *///保留当前的Context
 	if(getcontext(&t->context.uc) < 0){
 		fprint(2, "getcontext: %r\n");
 		abort();
@@ -109,7 +109,7 @@ taskalloc(void (*fn)(void*), void *arg, uint stack)
 
 	/* call makecontext to do the real work. */
 	/* leave a few words open on both ends */
-	t->context.uc.uc_stack.ss_sp = t->stk+8;
+	t->context.uc.uc_stack.ss_sp = t->stk+8; // 预留一些空间
 	t->context.uc.uc_stack.ss_size = t->stksize-64;
 #if defined(__sun__) && !defined(__MAKECONTEXT_V2_SOURCE)		/* sigh */
 #warning "doing sun thing"
@@ -128,6 +128,8 @@ taskalloc(void (*fn)(void*), void *arg, uint stack)
 	y = z;
 	z >>= 16;	/* hide undefined 32-bit shift from 32-bit compilers */
 	x = z>>16;
+    //由于makecontext需要参数必须是4个字节的，所以这里讲t的指针转为64位8个字节，然后分y,x 2个四字节传参数
+    //以备makecontext能够模拟设置堆栈传参,并设置sp等堆栈指针位置
 	makecontext(&t->context.uc, (void(*)())taskstart, 2, y, x);
 
 	return t;
@@ -140,7 +142,7 @@ taskcreate(void (*fn)(void*), void *arg, uint stack)
 	Task *t;
 
 	t = taskalloc(fn, arg, stack);
-	taskcount++;
+	taskcount++; // task数量+1
 	id = t->id;
 	if(nalltask%64 == 0){
 		alltask = realloc(alltask, (nalltask+64)*sizeof(alltask[0]));
@@ -165,7 +167,7 @@ tasksystem(void)
 }
 
 void
-taskswitch(void)
+taskswitch(void) //强制调用到sched task
 {
 	needstack(0);
 	contextswitch(&taskrunning->context, &taskschedcontext);
@@ -175,7 +177,7 @@ void
 taskready(Task *t)
 {
 	t->ready = 1;
-	addtask(&taskrunqueue, t);
+	addtask(&taskrunqueue, t); // 放入队列等待运行
 }
 
 int
@@ -207,11 +209,11 @@ taskexit(int val)
 {
 	taskexitval = val;
 	taskrunning->exiting = 1;
-	taskswitch();
+	taskswitch(); // 回调taskSched
 }
 
 static void
-contextswitch(Context *from, Context *to)
+contextswitch(Context *from, Context *to) // Context切换
 {
 	if(swapcontext(&from->uc, &to->uc) < 0){
 		fprint(2, "swapcontext failed: %r\n");
@@ -228,7 +230,7 @@ taskscheduler(void)
 	taskdebug("scheduler enter");
 	for(;;){
 		if(taskcount == 0)
-			exit(taskexitval);
+			exit(taskexitval); // 如果没有task则直接退出
 		t = taskrunqueue.head;
 		if(t == nil){
 			fprint(2, "no runnable tasks! %d tasks stalled\n", taskcount);
@@ -239,13 +241,14 @@ taskscheduler(void)
 		taskrunning = t;
 		tasknswitch++;
 		taskdebug("run %d (%s)", t->id, t->name);
+        //当前的context保存到taskschedcontext，t->context加载到context中
 		contextswitch(&taskschedcontext, &t->context);
 //print("back in scheduler\n");
-		taskrunning = nil;
+		taskrunning = nil; // 如果task返回了，可能是主动退出了，也可能是因为阻塞主动调度了
 		if(t->exiting){
 			if(!t->system)
 				taskcount--;
-			i = t->alltaskslot;
+			i = t->alltaskslot; //将尾部的task塞入被删掉的task，释放掉已经退出的task
 			alltask[i] = alltask[--nalltask];
 			alltask[i]->alltaskslot = i;
 			free(t);
@@ -311,7 +314,7 @@ needstack(int n)
 		abort();
 	}
 }
-
+// 打印Task相关的信息
 static void
 taskinfo(int s)
 {
@@ -346,7 +349,7 @@ static void
 taskmainstart(void *v)
 {
 	taskname("taskmain");
-	taskmain(taskargc, taskargv);
+	taskmain(taskargc, taskargv); //调用主函数
 }
 
 int
@@ -356,7 +359,7 @@ main(int argc, char **argv)
 
 	memset(&sa, 0, sizeof sa);
 	sa.sa_handler = taskinfo;
-	sa.sa_flags = SA_RESTART;
+	sa.sa_flags = SA_RESTART; // 系统调用被信号中断后不是返回失败而是重试
 	sigaction(SIGQUIT, &sa, &osa);
 
 #ifdef SIGINFO
@@ -369,7 +372,7 @@ main(int argc, char **argv)
 
 	if(mainstacksize == 0)
 		mainstacksize = 256*1024;
-	taskcreate(taskmainstart, nil, mainstacksize);
+	taskcreate(taskmainstart, nil, mainstacksize); //创建task放入可运行队列
 	taskscheduler();
 	fprint(2, "taskscheduler returned in main!\n");
 	abort();

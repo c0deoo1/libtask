@@ -80,15 +80,17 @@ makecontext(ucontext_t *ucp, void (*func)(void), int argc, ...)
 	if(argc != 2)
 		*(int*)0 = 0;
 	va_start(va, argc);
+    // 可变参数等待提取，注意X64的调用约定，默认是通过Register来传递的
+    // 前几个参数就是rdi和rsi
 	ucp->uc_mcontext.mc_rdi = va_arg(va, int);
 	ucp->uc_mcontext.mc_rsi = va_arg(va, int);
 	va_end(va);
 	sp = (long*)ucp->uc_stack.ss_sp+ucp->uc_stack.ss_size/sizeof(long);
 	sp -= argc;
 	sp = (void*)((uintptr_t)sp - (uintptr_t)sp%16);	/* 16-align for OS X */
-	*--sp = 0;	/* return address */
-	ucp->uc_mcontext.mc_rip = (long)func;
-	ucp->uc_mcontext.mc_rsp = (long)sp;
+	*--sp = 0;	/* return address */      // 返回地址为0，所以task的函数是不可能退出的，否则就panic了
+	ucp->uc_mcontext.mc_rip = (long)func; // 函数的地址
+	ucp->uc_mcontext.mc_rsp = (long)sp;   // 堆栈的地址
 }
 #endif
 
@@ -130,6 +132,7 @@ makecontext(ucontext_t *uc, void (*fn)(void), int argc, ...)
 int
 swapcontext(ucontext_t *oucp, const ucontext_t *ucp)
 {
+    // 当前的context保存到oucp，更新context到ucp
 	if(getcontext(oucp) == 0)
 		setcontext(ucp);
 	return 0;

@@ -25,7 +25,7 @@ fdtask(void *v)
 	int i, ms;
 	Task *t;
 	uvlong now;
-	
+	// 设置为系统任务
 	tasksystem();
 	taskname("fdtask");
 	for(;;){
@@ -47,7 +47,7 @@ fdtask(void *v)
 			else
 				ms = 5000;
 		}
-		if(poll(pollfd, npollfd, ms) < 0){
+		if(poll(pollfd, npollfd, ms) < 0){ //阻塞查询哪些fd是可写的
 			if(errno == EINTR)
 				continue;
 			fprint(2, "poll: %s\n", strerror(errno));
@@ -57,7 +57,7 @@ fdtask(void *v)
 		/* wake up the guys who deserve it */
 		for(i=0; i<npollfd; i++){
 			while(i < npollfd && pollfd[i].revents){
-				taskready(polltask[i]);
+				taskready(polltask[i]); // 就绪的task放入待调度的队列
 				--npollfd;
 				pollfd[i] = pollfd[npollfd];
 				polltask[i] = polltask[npollfd];
@@ -65,7 +65,7 @@ fdtask(void *v)
 		}
 		
 		now = nsec();
-		while((t=sleeping.head) && now >= t->alarmtime){
+		while((t=sleeping.head) && now >= t->alarmtime){ //定时任务也放入待调度的队列
 			deltask(&sleeping, t);
 			if(!t->system && --sleepingcounted == 0)
 				taskcount--;
@@ -81,7 +81,7 @@ fdwait(int fd, int rw)
 
 	if(!startedfdtask){
 		startedfdtask = 1;
-		taskcreate(fdtask, 0, 32768);
+		taskcreate(fdtask, 0, 32768); //创建Epoll调度任务
 	}
 
 	if(npollfd >= MAXFD){
@@ -269,7 +269,7 @@ int
 fdread(int fd, void *buf, int n)
 {
 	int m;
-	
+	// 如果不可读的话，就直接fdwait触发调度
 	while((m=read(fd, buf, n)) < 0 && errno == EAGAIN)
 		fdwait(fd, 'r');
 	return m;
@@ -281,6 +281,7 @@ fdwrite(int fd, void *buf, int n)
 	int m, tot;
 	
 	for(tot=0; tot<n; tot+=m){
+        // 如果不可写的话，就直接fdwait触发调度
 		while((m=write(fd, (char*)buf+tot, n-tot)) < 0 && errno == EAGAIN)
 			fdwait(fd, 'w');
 		if(m < 0)

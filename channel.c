@@ -35,7 +35,7 @@ chanfree(Channel *c)
 static void
 addarray(Altarray *a, Alt *alt)
 {
-	if(a->n == a->m){
+	if(a->n == a->m){ // 容量满了就扩容16个
 		a->m += 16;
 		a->a = realloc(a->a, a->m*sizeof a->a[0]);
 	}
@@ -78,15 +78,19 @@ altcanexec(Alt *a)
 		return 0;
 	c = a->c;
 	if(c->bufsize == 0){
+        // 如果缓冲为0，如果是CHANSND操作，那么接收队列队列里面如果大于0的话，是可以直接从接收队列里面拿的
 		ar = chanarray(c, otherop(a->op));
 		return ar && ar->n;
 	}else{
+        // 针对有缓冲的场景
 		switch(a->op){
 		default:
 			return 0;
 		case CHANSND:
+            // 是否还有容量可以写入
 			return c->nbuf < c->bufsize;
 		case CHANRCV:
+            // 是否还有剩余的没有被接收
 			return c->nbuf > 0;
 		}
 	}
@@ -94,7 +98,7 @@ altcanexec(Alt *a)
 
 static void
 altqueue(Alt *a)
-{
+{   // 放入到相关的队列中去，接收者就放入接收者队列
 	Altarray *ar;
 
 	ar = chanarray(a->c, a->op);
@@ -165,7 +169,7 @@ altcopy(Alt *s, Alt *r)
 		return;
 	assert(s != nil);
 	c = s->c;
-	if(s->op == CHANRCV){
+	if(s->op == CHANRCV){ //如果s为CHANRCV，索命s才是receiver，r是sender
 		t = s;
 		s = r;
 		r = t;
@@ -176,13 +180,16 @@ altcopy(Alt *s, Alt *r)
 	/*
 	 * Channel is empty (or unbuffered) - copy directly.
 	 */
-	if(s && r && c->nbuf == 0){
+	if(s && r && c->nbuf == 0){ // 如果sender和receiver都存在，而且buffer为空，则直接拷贝
 		amove(r->v, s->v, c->elemsize);
 		return;
 	}
 
 	/*
 	 * Otherwise it's always okay to receive and then send.
+	 * 由于这个函数执行的条件：
+	 * 如果nbuf==0，那么可以允许写或者同时读写
+	 * 如果nBuf!=0,可以允许读，或者同时读写
 	 */
 	if(r){
 		cp = c->buf + c->off*c->elemsize;
@@ -208,13 +215,13 @@ altexec(Alt *a)
 
 	c = a->c;
 	ar = chanarray(c, otherop(a->op));
-	if(ar && ar->n){
-		i = rand()%ar->n;
+	if(ar && ar->n){ //直接做数据拷贝
+		i = rand()%ar->n; //随机挑选一个接收者或发送者
 		other = ar->a[i];
-		altcopy(a, other);
+		altcopy(a, other); // 做数据交换
 		altalldequeue(other->xalt);
 		other->xalt[0].xalt = other;
-		taskready(other->task);
+		taskready(other->task); //将阻塞的task设置为ready
 	}else
 		altcopy(a, nil);
 }
@@ -226,7 +233,7 @@ chanalt(Alt *a)
 	int i, j, ncan, n, canblock;
 	Channel *c;
 	Task *t;
-
+    // a是一个数组，最后一个以a[i].op == CHANEND 或 a[i].op == CHANNOBLK结束
 	needstack(512);
 	for(i=0; a[i].op != CHANEND && a[i].op != CHANNOBLK; i++)
 		;
@@ -244,13 +251,13 @@ if(dbgalt) print("alt ");
 		c = a[i].c;
 if(dbgalt) print(" %c:", "esrnb"[a[i].op]);
 if(dbgalt) { if(c->name) print("%s", c->name); else print("%p", c); }
-		if(altcanexec(&a[i])){
+		if(altcanexec(&a[i])){ //看看是否可以执行
 if(dbgalt) print("*");
 			ncan++;
 		}
 	}
 	if(ncan){
-		j = rand()%ncan;
+		j = rand()%ncan; // 如果可以执行，则随机挑选一个执行
 		for(i=0; i<n; i++){
 			if(altcanexec(&a[i])){
 				if(j-- == 0){
@@ -269,14 +276,14 @@ print("\n");
 if(dbgalt)print("\n");
 
 	if(!canblock)
-		return -1;
+		return -1; // 如果不能阻塞，则直接返回-1
 
 	for(i=0; i<n; i++){
 		if(a[i].op != CHANNOP)
-			altqueue(&a[i]);
+			altqueue(&a[i]); // 如果可以阻塞则直接放入队列中
 	}
 
-	taskswitch();
+	taskswitch(); // 做任务切换
 
 	/*
 	 * the guy who ran the op took care of dequeueing us

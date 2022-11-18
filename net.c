@@ -45,7 +45,7 @@ netannounce(int istcp, char *server, int port)
 
 	if(proto == SOCK_STREAM)
 		listen(fd, 16);
-
+    // 设置为非阻塞模式
 	fdnoblock(fd);
 	taskstate("netannounce succeeded");
 	return fd;
@@ -58,7 +58,7 @@ netaccept(int fd, char *server, int *port)
 	struct sockaddr_in sa;
 	uchar *ip;
 	socklen_t len;
-	
+	// 这里是关键会触发调度
 	fdwait(fd, 'r');
 
 	taskstate("netaccept");

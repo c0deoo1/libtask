@@ -43,8 +43,9 @@ qunlock(QLock *l)
 		fprint(2, "qunlock: owner=0\n");
 		abort();
 	}
+    // 将owner设置为wating队列的头部
 	if((l->owner = ready = l->waiting.head) != nil){
-		deltask(&l->waiting, ready);
+		deltask(&l->waiting, ready); //删除头部，并就绪该task
 		taskready(ready);
 	}
 }
@@ -52,8 +53,8 @@ qunlock(QLock *l)
 static int
 _rlock(RWLock *l, int block)
 {
-	if(l->writer == nil && l->wwaiting.head == nil){
-		l->readers++;
+	if(l->writer == nil && l->wwaiting.head == nil){ // 写锁比较优先
+		l->readers++; //没有被写锁持有，并且没有写锁等待
 		return 1;
 	}
 	if(!block)
@@ -109,7 +110,7 @@ runlock(RWLock *l)
 	Task *t;
 
 	if(--l->readers == 0 && (t = l->wwaiting.head) != nil){
-		deltask(&l->wwaiting, t);
+		deltask(&l->wwaiting, t); //写锁优先级更高
 		l->writer = t;
 		taskready(t);
 	}
@@ -130,12 +131,12 @@ wunlock(RWLock *l)
 		abort();
 	}
 	while((t = l->rwaiting.head) != nil){
-		deltask(&l->rwaiting, t);
+		deltask(&l->rwaiting, t); //将所有的读锁都唤醒
 		l->readers++;
 		taskready(t);
 	}
 	if(l->readers == 0 && (t = l->wwaiting.head) != nil){
-		deltask(&l->wwaiting, t);
+		deltask(&l->wwaiting, t); //如果没有读锁，则将写锁唤醒
 		l->writer = t;
 		taskready(t);
 	}

@@ -52,7 +52,7 @@ taskmain(int argc, char **argv)
 	fdnoblock(fd);
 	while((cfd = netaccept(fd, remote, &rport)) >= 0){
 		fprintf(stderr, "connection from %s:%d\n", remote, rport);
-		taskcreate(proxytask, (void*)cfd, STACK);
+		taskcreate(proxytask, (void*)cfd, STACK); //创建协程做套接字的读写
 	}
 }
 
@@ -68,7 +68,7 @@ proxytask(void *v)
 	}
 	
 	fprintf(stderr, "connected to %s:%d\n", server, port);
-
+    // 开启单独的协程来做套接字的读写
 	taskcreate(rwtask, mkfd2(fd, remotefd), STACK);
 	taskcreate(rwtask, mkfd2(remotefd, fd), STACK);
 }
